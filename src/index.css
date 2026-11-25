@@ -1,0 +1,85 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --font-cyber: "Michroma", "Plus Jakarta Sans", system-ui, sans-serif;
+    --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+    --font-body: "DM Sans", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  }
+
+  html {
+    font-family: var(--font-body);
+    background-color: #030808;
+    color: #f1f7f6;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    .ss-animate-scan,
+    .ss-animate-pulse-cell,
+    .ss-animate-float {
+      animation: none !important;
+    }
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-cyber {
+    font-family: var(--font-cyber);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@keyframes ssScanSweep {
+  0% {
+    transform: translateY(-10%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.75;
+  }
+  85% {
+    opacity: 0.75;
+  }
+  100% {
+    transform: translateY(115%);
+    opacity: 0;
+  }
+}
+
+@keyframes ssCellShimmer {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.ss-animate-scan {
+  animation: ssScanSweep 4.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.ss-animate-pulse-cell {
+  animation: ssCellShimmer 3.2s ease-in-out infinite;
+}
