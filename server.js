@@ -32,11 +32,8 @@ var DEFAULT_DISCLAIMER = "AI-assisted assessment only \u2014 not proof that a me
 var INDIA_EMERGENCY_GUIDANCE = "If you have shared banking credentials, authorized an unknown UPI transfer, or lost money in India, call the National Cyber Crime Helpline at 1930 immediately and file a complaint on https://cybercrime.gov.in. You can also report unsolicited fraud communications via Sanchar Saathi Chakshu (https://sancharsaathi.gov.in/sfc/).";
 function detectSensitiveDataWarning(text) {
   const lower = text.toLowerCase();
-  if (/\b(?:\d[ -]*?){15,16}\b/.test(text) && !/\b\d{10}\b/.test(text.trim())) {
-    const digitsOnly = text.replace(/\D/g, "");
-    if (digitsOnly.length >= 15 && /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{3,4}\b/.test(text)) {
-      return "Your input appears to contain a 15\u201316 digit card-like number. Remove any card numbers, CVVs, or account details before submitting.";
-    }
+  if (/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{3,4}\b/.test(text)) {
+    return "Your input appears to contain a 15\u201316 digit card-like number. Remove any card numbers, CVVs, or account details before submitting.";
   }
   if (/\b(?:my\s+(?:otp|pin|upi\s*pin|cvv|password|mpin)\s*(?:is|:|=)\s*[a-z0-9*#-]{3,12})\b/i.test(
     lower
@@ -167,16 +164,19 @@ function validateAnalysisReport(raw, fallbackMode, inputKind) {
 }
 function validateIncidentInput(input) {
   const errors = {};
-  if (!input.scamType.trim()) {
+  const scamType = input.scamType.trim();
+  if (scamType.length < 2 || scamType.length > 100) {
     errors.scamType = "Select the scam or threat category.";
   }
-  if (!input.channel.trim()) {
+  const channel = input.channel.trim();
+  if (channel.length < 2 || channel.length > 60) {
     errors.channel = "Select where you encountered the message or link.";
   }
-  if (!input.approximateDate.trim()) {
+  const approxDate = input.approximateDate.trim();
+  if (approxDate.length < 4 || approxDate.length > 32) {
     errors.approximateDate = "Provide an approximate date.";
   } else {
-    const parsed = Date.parse(input.approximateDate);
+    const parsed = Date.parse(approxDate);
     if (Number.isNaN(parsed)) {
       errors.approximateDate = "Enter a valid date.";
     }
@@ -190,9 +190,10 @@ function validateIncidentInput(input) {
     errors.description = "Please remove any card numbers, CVVs, PINs, or OTPs before submitting this report.";
   }
   if (input.contactEmail && input.contactEmail.trim()) {
-    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contactEmail.trim());
+    const email = input.contactEmail.trim();
+    const emailValid = email.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     if (!emailValid) {
-      errors.contactEmail = "Enter a valid email address or leave this field blank.";
+      errors.contactEmail = "Enter a valid email address (max 200 chars) or leave this field blank.";
     }
   }
   return {
@@ -256,6 +257,142 @@ function extractGroundingSources(groundingMetadata) {
   return { researchSources, researchQueries };
 }
 
+// src/lib/googleSheets.ts
+var SHEET_HEADERS = [
+  "Analyzed At (UTC)",
+  "User Email",
+  "Engine Mode",
+  "Input Type",
+  "Applied Input (Redacted)",
+  "Risk Level",
+  "Scam Category",
+  "Response Message (Summary)",
+  "Evidence Signals",
+  "Recommended Next Steps",
+  "Verification Guidance",
+  "Research Sources"
+];
+function escapeSheetCellValue(rawValue) {
+  const cleaned = rawValue.replace(/\r?\n/g, " ").trim();
+  if (!cleaned) return "";
+  if (/^[=+\-@\t\r]/.test(cleaned)) {
+    return `'${cleaned}`;
+  }
+  return cleaned;
+}
+function redactFullInputForSheet(rawText, maxLength = 1200) {
+  const normalized = rawText.replace(/\s+/g, " ").replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{3,4}\b/g, "[REDACTED-CARD]").replace(
+    /\b(otp|pin|upi\s*pin|cvv|password|mpin)\s*(?:is|:|=)\s*[a-z0-9*#-]{3,12}\b/gi,
+    "$1: [REDACTED]"
+  ).trim();
+  if (!normalized) return "Submitted excerpt";
+  const clipped = normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 1)}\u2026`;
+  return escapeSheetCellValue(clipped);
+}
+function buildOrganizedSheetRow(params) {
+  const { rawInput, userEmail, report } = params;
+  const normalizedEmail = (userEmail || "").trim();
+  const safeEmail = normalizedEmail ? escapeSheetCellValue(normalizedEmail.slice(0, 200)) : "Not signed in";
+  const modeLabel = report.mode === "live" ? "Live AI + Web Research" : "Demo Mode (Rule-Based)";
+  const evidenceSummary = report.observedEvidence.length > 0 ? report.observedEvidence.map(
+    (item) => `[${item.severity.toUpperCase()}] ${item.indicatorType}: "${item.quotedPhrase}" \u2014 ${item.whyItMatters}`
+  ).join(" | ") : "No high-confidence scam phrases detected";
+  const nextStepsText = report.recommendedNextSteps.length > 0 ? report.recommendedNextSteps.map((step, index) => `${index + 1}. ${step}`).join(" | ") : "Verify via official website or app.";
+  const sourcesText = report.researchSources && report.researchSources.length > 0 ? report.researchSources.map((src) => `${src.title} (${src.url})`).join(" | ") : "None matched";
+  return [
+    escapeSheetCellValue(report.analyzedAt || (/* @__PURE__ */ new Date()).toISOString()),
+    safeEmail,
+    modeLabel,
+    report.inputKind === "url" ? "URL" : "MESSAGE",
+    redactFullInputForSheet(rawInput),
+    report.riskLevel,
+    escapeSheetCellValue(report.category),
+    escapeSheetCellValue(report.summary.slice(0, 1500)),
+    escapeSheetCellValue(evidenceSummary.slice(0, 1800)),
+    escapeSheetCellValue(nextStepsText.slice(0, 1500)),
+    escapeSheetCellValue(report.verificationGuidance.slice(0, 1e3)),
+    escapeSheetCellValue(sourcesText.slice(0, 1e3))
+  ];
+}
+function buildAnalysisLogPayload(params) {
+  const row = buildOrganizedSheetRow(params);
+  return {
+    eventType: "analysis_result",
+    analyzedAt: row[0],
+    userEmail: row[1],
+    mode: params.report.mode,
+    inputKind: params.report.inputKind,
+    appliedInput: row[4],
+    riskLevel: params.report.riskLevel,
+    category: params.report.category,
+    responseMessage: row[7],
+    evidenceSignals: row[8],
+    recommendedNextSteps: row[9],
+    verificationGuidance: row[10],
+    researchSources: row[11],
+    headers: [...SHEET_HEADERS],
+    row
+  };
+}
+
+// src/lib/threatAlert.ts
+function isThreatAlertEligible(riskLevel) {
+  return riskLevel === "High" || riskLevel === "Critical";
+}
+function buildThreatAlertEmailPayload(params) {
+  const email = params.recipientEmail.trim().slice(0, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("A valid verified recipient email address is required.");
+  }
+  if (!isThreatAlertEligible(params.report.riskLevel)) {
+    throw new Error("Threat alert emails are only generated for High or Critical findings.");
+  }
+  const cleanName = (params.recipientName || "").trim().slice(0, 120);
+  const inputPreview = redactFullInputForSheet(params.rawInput, 260);
+  const subject = `SignalSure ${params.report.riskLevel} Risk Alert: ${params.report.category}`;
+  const steps = params.report.recommendedNextSteps.slice(0, 5);
+  const stepsFormatted = steps.length > 0 ? steps.map((step, i) => `${i + 1}. ${step}`).join("\n") : "1. Do not click any link, scan QR codes, or share OTPs/UPI PINs.";
+  const greeting = cleanName ? `Hello ${cleanName},` : "Hello,";
+  const emailBody = [
+    greeting,
+    "",
+    `SignalSure flagged a ${params.report.riskLevel.toUpperCase()} RISK submission (${params.report.category}).`,
+    "",
+    "Assessment Summary:",
+    params.report.summary,
+    "",
+    "Redacted Submission Excerpt:",
+    `"${inputPreview}"`,
+    "",
+    "Recommended Next Steps:",
+    stepsFormatted,
+    "",
+    "Independent Verification:",
+    params.report.verificationGuidance,
+    "",
+    "India Emergency Cyber Help:",
+    params.report.indiaEmergencyGuidance,
+    "",
+    "---",
+    "Note: SignalSure provides AI-assisted risk indicators, not proof that a message is fraudulent or safe."
+  ].join("\n");
+  return {
+    eventType: "threat_alert",
+    recipientEmail: email,
+    recipientName: cleanName || void 0,
+    subject,
+    riskLevel: params.report.riskLevel,
+    category: params.report.category,
+    analyzedAt: params.report.analyzedAt,
+    inputPreview,
+    summary: params.report.summary,
+    recommendedNextSteps: steps,
+    verificationGuidance: params.report.verificationGuidance,
+    indiaEmergencyGuidance: params.report.indiaEmergencyGuidance,
+    emailBody
+  };
+}
+
 // server.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
@@ -290,6 +427,76 @@ function isSafeWebhookUrl(rawUrl) {
   } catch {
     return null;
   }
+}
+function getFirebaseWebApiKey() {
+  try {
+    const configPath = path.resolve(__dirname, "firebase-applet-config.json");
+    const fallbackPath = path.resolve(process.cwd(), "firebase-applet-config.json");
+    const resolved = fs.existsSync(configPath) ? configPath : fallbackPath;
+    if (!fs.existsSync(resolved)) return null;
+    const parsed = JSON.parse(fs.readFileSync(resolved, "utf8"));
+    return typeof parsed.apiKey === "string" && parsed.apiKey.trim() ? parsed.apiKey.trim() : null;
+  } catch {
+    return null;
+  }
+}
+async function verifyFirebaseUserFromBearer(authHeader) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  const idToken = authHeader.slice("Bearer ".length).trim();
+  if (!idToken) return null;
+  const apiKey = getFirebaseWebApiKey();
+  if (!apiKey) return null;
+  try {
+    const resp = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(
+        apiKey
+      )}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5e3),
+        body: JSON.stringify({ idToken })
+      }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const user = data.users?.[0];
+    if (!user?.localId || !user?.email || !user?.emailVerified) {
+      return null;
+    }
+    return {
+      uid: user.localId,
+      email: user.email,
+      emailVerified: Boolean(user.emailVerified),
+      displayName: user.displayName
+    };
+  } catch {
+    return null;
+  }
+}
+var threatAlertRateMap = /* @__PURE__ */ new Map();
+function checkThreatAlertQuota(uid, signature) {
+  const now = Date.now();
+  const oneHourAgo = now - 60 * 60 * 1e3;
+  const entry = threatAlertRateMap.get(uid) || { timestamps: [] };
+  entry.timestamps = entry.timestamps.filter((t) => t > oneHourAgo);
+  if (entry.lastSig === signature && entry.lastSigAt && now - entry.lastSigAt < 3 * 60 * 1e3) {
+    return {
+      allowed: false,
+      reason: "An identical threat alert email was already sent recently."
+    };
+  }
+  if (entry.timestamps.length >= 5) {
+    return {
+      allowed: false,
+      reason: "Hourly threat-alert email limit reached (5 per hour)."
+    };
+  }
+  entry.timestamps.push(now);
+  entry.lastSig = signature;
+  entry.lastSigAt = now;
+  threatAlertRateMap.set(uid, entry);
+  return { allowed: true };
 }
 function getCapabilities() {
   const botpressBotId = process.env.BOTPRESS_BOT_ID?.trim() || "";
@@ -647,13 +854,17 @@ ${(researchDraft.text ?? "").trim() || "Advise caution and verification via offi
       };
       const forwardedTo = [];
       for (const hook of webhooks) {
-        const resp = await fetch(hook.url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (resp.ok) {
-          forwardedTo.push(hook.label);
+        try {
+          const resp = await fetch(hook.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(8e3),
+            body: JSON.stringify(payload)
+          });
+          if (resp.ok) {
+            forwardedTo.push(hook.label);
+          }
+        } catch {
         }
       }
       if (forwardedTo.length === 0) {
@@ -676,6 +887,175 @@ ${(researchDraft.text ?? "").trim() || "Advise caution and verification via offi
         message: "Unable to submit incident report right now."
       });
     }
+  });
+  app.post("/api/analysis-log", async (req, res) => {
+    try {
+      const sheetsUrl = isSafeWebhookUrl(process.env.GOOGLE_SHEETS_WEBHOOK_URL);
+      if (!sheetsUrl) {
+        res.json({
+          forwarded: false,
+          configured: false,
+          reason: "GOOGLE_SHEETS_WEBHOOK_URL is not configured."
+        });
+        return;
+      }
+      const body = req.body;
+      const rawInput = typeof body?.rawInput === "string" ? body.rawInput.trim() : "";
+      if (!rawInput || rawInput.length > 5e3) {
+        res.status(400).json({
+          errorCode: "INVALID_LOG_INPUT",
+          message: "A valid analyzed input string is required."
+        });
+        return;
+      }
+      const rawReport = body?.report && typeof body.report === "object" ? body.report : null;
+      if (!rawReport) {
+        res.status(400).json({
+          errorCode: "INVALID_LOG_REPORT",
+          message: "A valid structured analysis report is required."
+        });
+        return;
+      }
+      const mode = rawReport.mode === "live" ? "live" : "demo";
+      const inputKind = rawReport.inputKind === "url" ? "url" : "message";
+      const validatedReport = validateAnalysisReport(rawReport, mode, inputKind);
+      const candidateEmail = typeof body?.userEmail === "string" ? body.userEmail.trim().slice(0, 200) : "";
+      const safeEmail = candidateEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail) ? candidateEmail : null;
+      const payload = buildAnalysisLogPayload({
+        rawInput,
+        userEmail: safeEmail,
+        report: validatedReport
+      });
+      const resp = await fetch(sheetsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8e3),
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) {
+        res.status(502).json({
+          forwarded: false,
+          configured: true,
+          message: "Configured Google Sheets webhook rejected the analysis log entry."
+        });
+        return;
+      }
+      res.json({
+        forwarded: true,
+        configured: true
+      });
+    } catch {
+      res.status(502).json({
+        forwarded: false,
+        configured: Boolean(isSafeWebhookUrl(process.env.GOOGLE_SHEETS_WEBHOOK_URL)),
+        message: "Unable to reach configured Google Sheets webhook."
+      });
+    }
+  });
+  app.post("/api/threat-alert", async (req, res) => {
+    try {
+      const gmailWebhookUrl = isSafeWebhookUrl(process.env.GMAIL_ALERT_WEBHOOK_URL);
+      if (!gmailWebhookUrl) {
+        res.json({
+          sent: false,
+          configured: false,
+          reason: "GMAIL_ALERT_WEBHOOK_URL is not configured."
+        });
+        return;
+      }
+      const verifiedUser = await verifyFirebaseUserFromBearer(
+        req.headers.authorization
+      );
+      if (!verifiedUser) {
+        res.status(401).json({
+          sent: false,
+          configured: true,
+          errorCode: "UNAUTHORIZED_THREAT_ALERT",
+          message: "Sign in with a verified Google account to receive threat-alert emails."
+        });
+        return;
+      }
+      const body = req.body;
+      const rawInput = typeof body?.rawInput === "string" ? body.rawInput.trim() : "";
+      if (!rawInput || rawInput.length > 5e3) {
+        res.status(400).json({
+          sent: false,
+          errorCode: "INVALID_ALERT_INPUT",
+          message: "A valid analyzed input string is required."
+        });
+        return;
+      }
+      const rawReport = body?.report && typeof body.report === "object" ? body.report : null;
+      if (!rawReport) {
+        res.status(400).json({
+          sent: false,
+          errorCode: "INVALID_ALERT_REPORT",
+          message: "A valid structured analysis report is required."
+        });
+        return;
+      }
+      const mode = rawReport.mode === "live" ? "live" : "demo";
+      const inputKind = rawReport.inputKind === "url" ? "url" : "message";
+      const validatedReport = validateAnalysisReport(rawReport, mode, inputKind);
+      if (!isThreatAlertEligible(validatedReport.riskLevel)) {
+        res.json({
+          sent: false,
+          configured: true,
+          skipped: "Threat alert emails are sent only for High or Critical risks."
+        });
+        return;
+      }
+      const sig = `${validatedReport.riskLevel}:${validatedReport.category}:${validatedReport.summary.slice(
+        0,
+        80
+      )}`;
+      const quota = checkThreatAlertQuota(verifiedUser.uid, sig);
+      if (!quota.allowed) {
+        res.status(429).json({
+          sent: false,
+          configured: true,
+          message: quota.reason
+        });
+        return;
+      }
+      const alertPayload = buildThreatAlertEmailPayload({
+        recipientEmail: verifiedUser.email,
+        recipientName: verifiedUser.displayName,
+        rawInput,
+        report: validatedReport
+      });
+      const resp = await fetch(gmailWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8e3),
+        body: JSON.stringify(alertPayload)
+      });
+      if (!resp.ok) {
+        res.status(502).json({
+          sent: false,
+          configured: true,
+          message: "Developer Gmail alert webhook rejected the notification."
+        });
+        return;
+      }
+      res.json({
+        sent: true,
+        configured: true,
+        recipientEmail: verifiedUser.email
+      });
+    } catch {
+      res.status(502).json({
+        sent: false,
+        configured: Boolean(isSafeWebhookUrl(process.env.GMAIL_ALERT_WEBHOOK_URL)),
+        message: "Unable to dispatch threat alert email right now."
+      });
+    }
+  });
+  app.use("/api", (_req, res) => {
+    res.status(404).json({
+      errorCode: "API_NOT_FOUND",
+      message: "API endpoint not found."
+    });
   });
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");

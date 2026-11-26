@@ -17,18 +17,25 @@ export function AboutPage({ capabilities, onNavigate }: AboutPageProps) {
         'Runs structured scam indicator extraction and safety Q&A exclusively on the server.',
     },
     {
-      name: 'Botpress Webchat Widget',
-      envVar: 'BOTPRESS_BOT_ID + BOTPRESS_CLIENT_ID',
-      configured: Boolean(capabilities?.botpressConfigured),
+      name: 'Firebase Firestore & Google Sign-In',
+      envVar: 'firebase-applet-config.json',
+      configured: true,
       purpose:
-        'Optional embedded conversational assistant; falls back cleanly to SignalSure’s local demo assistant.',
+        'Persists private scan history summaries and incident logs scoped per verified Google account.',
     },
     {
-      name: 'Google Forms / Google Sheets Relay',
-      envVar: 'GOOGLE_SHEETS_WEBHOOK_URL',
-      configured: Boolean(capabilities?.sheetsWebhookConfigured),
+      name: 'Botpress Webchat Widget',
+      envVar: 'Webchat v5.0 Script (Embedded)',
+      configured: true,
       purpose:
-        'Forwards anonymized incident reports to a spreadsheet intake endpoint.',
+        'Embedded Botpress Webchat v5.0 bot active sitewide alongside SignalSure’s built-in safety assistant.',
+    },
+    {
+      name: 'Google Sheets (1P Sync + Central Relay)',
+      envVar: 'Google Sign-In / GOOGLE_SHEETS_WEBHOOK_URL',
+      configured: true,
+      purpose:
+        'Signed-in users can create or append organized analysis logs directly to Google Sheets; GOOGLE_SHEETS_WEBHOOK_URL additionally collects all visitors into one central sheet.',
     },
     {
       name: 'Zapier Workflow Automation',

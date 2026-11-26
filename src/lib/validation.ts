@@ -47,12 +47,9 @@ export interface InputValidationResult {
 export function detectSensitiveDataWarning(text: string): string | undefined {
   const lower = text.toLowerCase();
 
-  // Check for explicit 16-digit card numbers (with spaces or hyphens)
-  if (/\b(?:\d[ -]*?){15,16}\b/.test(text) && !/\b\d{10}\b/.test(text.trim())) {
-    const digitsOnly = text.replace(/\D/g, '');
-    if (digitsOnly.length >= 15 && /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{3,4}\b/.test(text)) {
-      return 'Your input appears to contain a 15–16 digit card-like number. Remove any card numbers, CVVs, or account details before submitting.';
-    }
+  // Check for explicit 15-16 digit card numbers (with spaces or hyphens)
+  if (/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{3,4}\b/.test(text)) {
+    return 'Your input appears to contain a 15–16 digit card-like number. Remove any card numbers, CVVs, or account details before submitting.';
   }
 
   // Check for explicit OTP / PIN / CVV / password sharing phrases with values
@@ -268,18 +265,21 @@ export function validateIncidentInput(input: IncidentReportInput): {
 } {
   const errors: Partial<Record<keyof IncidentReportInput, string>> = {};
 
-  if (!input.scamType.trim()) {
+  const scamType = input.scamType.trim();
+  if (scamType.length < 2 || scamType.length > 100) {
     errors.scamType = 'Select the scam or threat category.';
   }
 
-  if (!input.channel.trim()) {
+  const channel = input.channel.trim();
+  if (channel.length < 2 || channel.length > 60) {
     errors.channel = 'Select where you encountered the message or link.';
   }
 
-  if (!input.approximateDate.trim()) {
+  const approxDate = input.approximateDate.trim();
+  if (approxDate.length < 4 || approxDate.length > 32) {
     errors.approximateDate = 'Provide an approximate date.';
   } else {
-    const parsed = Date.parse(input.approximateDate);
+    const parsed = Date.parse(approxDate);
     if (Number.isNaN(parsed)) {
       errors.approximateDate = 'Enter a valid date.';
     }
@@ -296,9 +296,10 @@ export function validateIncidentInput(input: IncidentReportInput): {
   }
 
   if (input.contactEmail && input.contactEmail.trim()) {
-    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contactEmail.trim());
+    const email = input.contactEmail.trim();
+    const emailValid = email.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     if (!emailValid) {
-      errors.contactEmail = 'Enter a valid email address or leave this field blank.';
+      errors.contactEmail = 'Enter a valid email address (max 200 chars) or leave this field blank.';
     }
   }
 

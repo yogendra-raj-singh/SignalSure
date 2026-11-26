@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowRight,
@@ -125,7 +125,7 @@ export function HomePage({
   const [previewSampleId, setPreviewSampleId] = useState<string>(
     SAMPLE_CASES[0].id
   );
-  const [pointerOffset, setPointerOffset] = useState({ x: 0, y: 0 });
+  const cutoutParallaxRef = useRef<HTMLDivElement>(null);
   const [heroImgFailed, setHeroImgFailed] = useState(false);
   const [failedThreats, setFailedThreats] = useState<Record<string, boolean>>(
     {}
@@ -144,6 +144,12 @@ export function HomePage({
   const reducedMotion =
     userMotionOverride !== null ? userMotionOverride : prefersReducedMotion;
 
+  useEffect(() => {
+    if (reducedMotion && cutoutParallaxRef.current) {
+      cutoutParallaxRef.current.style.transform = 'translate3d(0px, 0px, 0)';
+    }
+  }, [reducedMotion]);
+
   const previewSample = useMemo(
     () =>
       SAMPLE_CASES.find((c) => c.id === previewSampleId) ?? SAMPLE_CASES[0],
@@ -156,15 +162,18 @@ export function HomePage({
   );
 
   const handleHeroPointerMove = (e: React.PointerEvent<HTMLElement>) => {
-    if (reducedMotion || typeof window === 'undefined') return;
+    if (reducedMotion || typeof window === 'undefined' || !cutoutParallaxRef.current) return;
     if (window.innerWidth < 1024) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const nx = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
-    const ny = ((e.clientY - rect.top) / Math.max(rect.height, 1)) * 2 - 1;
-    setPointerOffset({
-      x: Math.max(-1, Math.min(1, nx)),
-      y: Math.max(-1, Math.min(1, ny)),
-    });
+    const nx = Math.max(-1, Math.min(1, ((e.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1));
+    const ny = Math.max(-1, Math.min(1, ((e.clientY - rect.top) / Math.max(rect.height, 1)) * 2 - 1));
+    cutoutParallaxRef.current.style.transform = `translate3d(${(nx * 8).toFixed(1)}px, ${(ny * 5).toFixed(1)}px, 0)`;
+  };
+
+  const handleHeroPointerLeave = () => {
+    if (cutoutParallaxRef.current) {
+      cutoutParallaxRef.current.style.transform = 'translate3d(0px, 0px, 0)';
+    }
   };
 
   // Map 4 capability tabs to their grid column indices (skipping index 2 which hosts the 3D core)
@@ -176,7 +185,7 @@ export function HomePage({
       {/* SECTION 1: Hero with Monochrome Person Cutout & Telemetry-style Sample Panels */}
       <section
         onPointerMove={handleHeroPointerMove}
-        onPointerLeave={() => setPointerOffset({ x: 0, y: 0 })}
+        onPointerLeave={handleHeroPointerLeave}
         className="relative overflow-hidden border-b border-white/10 bg-[#030808]"
       >
         {/* Radial Emerald Ambient Illumination */}
@@ -296,15 +305,11 @@ export function HomePage({
             {/* CENTER PERSON CUTOUT WITH + MATRIX PROJECTION & SCAN SWEEP */}
             <div className="order-1 min-w-0 flex justify-center lg:order-2 lg:col-span-6">
               <motion.div
+                ref={cutoutParallaxRef}
                 initial={reducedMotion ? false : { opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: reducedMotion ? 0 : 0.7 }}
                 style={{
-                  transform: reducedMotion
-                    ? undefined
-                    : `translate3d(${(pointerOffset.x * 8).toFixed(1)}px, ${(
-                        pointerOffset.y * 5
-                      ).toFixed(1)}px, 0)`,
                   transition: 'transform 180ms ease-out',
                 }}
                 className="relative flex h-[340px] w-full max-w-[440px] items-end justify-center sm:h-[450px] lg:h-[570px]"

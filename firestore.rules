@@ -1,0 +1,218 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global hardened primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'photoUrl', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoUrl', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 120
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 200
+        && data.email == request.auth.token.email
+        && data.photoUrl is string
+        && data.photoUrl.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidScanReport(data) {
+      return data.keys().hasAll([
+          'ownerId', 'inputKind', 'inputPreview', 'mode', 'riskLevel',
+          'category', 'summary', 'researchSummary', 'evidenceCount',
+          'notes', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'inputKind', 'inputPreview', 'mode', 'riskLevel',
+          'category', 'summary', 'researchSummary', 'evidenceCount',
+          'notes', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.inputKind in ['message', 'url']
+        && data.inputPreview is string
+        && data.inputPreview.size() >= 1
+        && data.inputPreview.size() <= 220
+        && data.mode in ['live', 'demo']
+        && data.riskLevel in ['Low', 'Medium', 'High', 'Critical']
+        && data.category is string
+        && data.category.size() >= 1
+        && data.category.size() <= 80
+        && data.summary is string
+        && data.summary.size() >= 1
+        && data.summary.size() <= 700
+        && data.researchSummary is string
+        && data.researchSummary.size() <= 1000
+        && data.evidenceCount is int
+        && data.evidenceCount >= 0
+        && data.evidenceCount <= 20
+        && data.notes is string
+        && data.notes.size() <= 500
+        && data.status in ['active', 'resolved']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidIncidentReport(data) {
+      return data.keys().hasAll([
+          'ownerId', 'referenceId', 'scamType', 'channel',
+          'approximateDate', 'description', 'contactEmail',
+          'submissionMode', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'referenceId', 'scamType', 'channel',
+          'approximateDate', 'description', 'contactEmail',
+          'submissionMode', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.referenceId is string
+        && data.referenceId.size() >= 3
+        && data.referenceId.size() <= 32
+        && data.referenceId.matches('^SS-[A-Z0-9]+$')
+        && data.scamType is string
+        && data.scamType.size() >= 2
+        && data.scamType.size() <= 100
+        && data.channel is string
+        && data.channel.size() >= 2
+        && data.channel.size() <= 60
+        && data.approximateDate is string
+        && data.approximateDate.size() >= 4
+        && data.approximateDate.size() <= 32
+        && data.description is string
+        && data.description.size() >= 20
+        && data.description.size() <= 2500
+        && data.contactEmail is string
+        && data.contactEmail.size() <= 200
+        && data.submissionMode in ['live', 'demo']
+        && data.status in ['submitted', 'archived']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Users collection: strict PII isolation (owner read/write only, no list)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // Saved scam analysis history records
+    match /scanReports/{reportId} {
+      allow get: if isSignedIn()
+        && isValidId(reportId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isSignedIn()
+        && existing().ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(reportId)
+        && isValidScanReport(incoming())
+        && incoming().status == 'active'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(reportId)
+        && isValidScanReport(incoming())
+        && existing().ownerId == request.auth.uid
+        && existing().status != 'resolved'
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'status', 'updatedAt']);
+
+      allow delete: if isSignedIn()
+        && isValidId(reportId)
+        && existing().ownerId == request.auth.uid;
+    }
+
+    // Saved incident report records
+    match /incidentReports/{incidentId} {
+      allow get: if isSignedIn()
+        && isValidId(incidentId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isSignedIn()
+        && existing().ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(incidentId)
+        && isValidIncidentReport(incoming())
+        && incoming().status == 'submitted'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(incidentId)
+        && isValidIncidentReport(incoming())
+        && existing().ownerId == request.auth.uid
+        && existing().status != 'archived'
+        && incoming().ownerId == existing().ownerId
+        && incoming().referenceId == existing().referenceId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isSignedIn()
+        && isValidId(incidentId)
+        && existing().ownerId == request.auth.uid;
+    }
+  }
+}

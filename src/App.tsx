@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { FirebaseProvider } from './components/FirebaseProvider';
 import { Footer } from './components/Footer';
 import { Navbar, type AppRoute } from './components/Navbar';
 import type { ServerCapabilities } from './lib/types';
@@ -86,46 +88,50 @@ export default function App() {
   }, []);
 
   return (
-    <div
-      data-route={route}
-      className="flex min-h-screen flex-col bg-[#030808] text-[#F1F7F6]"
-    >
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-[2px] focus:bg-[#00F0C8] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#031411]"
-      >
-        Skip to main content
-      </a>
+    <ErrorBoundary>
+      <FirebaseProvider>
+        <div
+          data-route={route}
+          className="flex min-h-screen flex-col bg-[#030808] text-[#F1F7F6]"
+        >
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-[2px] focus:bg-[#00F0C8] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#031411]"
+          >
+            Skip to main content
+          </a>
 
-      <Navbar currentRoute={route} onNavigate={navigate} />
+          <Navbar currentRoute={route} onNavigate={navigate} />
 
-      <main id="main-content" className="flex-1">
-        {route === '/' && (
-          <HomePage
-            onNavigate={navigate}
-            onSelectSampleForAnalyzer={(sampleId) =>
-              setPendingSampleId(sampleId)
-            }
-          />
-        )}
-        {route === '/analyze' && (
-          <AnalyzePage
-            capabilities={capabilities}
-            initialSampleId={pendingSampleId}
-            onConsumeInitialSample={handleConsumeSample}
-          />
-        )}
-        {route === '/assistant' && (
-          <AssistantPage capabilities={capabilities} />
-        )}
-        {route === '/learn' && <LearnPage onNavigate={navigate} />}
-        {route === '/report' && <ReportPage capabilities={capabilities} />}
-        {route === '/about' && (
-          <AboutPage capabilities={capabilities} onNavigate={navigate} />
-        )}
-      </main>
+          <main id="main-content" className="flex-1">
+            {route === '/' && (
+              <HomePage
+                onNavigate={navigate}
+                onSelectSampleForAnalyzer={(sampleId) =>
+                  setPendingSampleId(sampleId)
+                }
+              />
+            )}
+            {route === '/analyze' && (
+              <AnalyzePage
+                capabilities={capabilities}
+                initialSampleId={pendingSampleId}
+                onConsumeInitialSample={handleConsumeSample}
+              />
+            )}
+            {route === '/assistant' && (
+              <AssistantPage capabilities={capabilities} />
+            )}
+            {route === '/learn' && <LearnPage onNavigate={navigate} />}
+            {route === '/report' && <ReportPage capabilities={capabilities} />}
+            {route === '/about' && (
+              <AboutPage capabilities={capabilities} onNavigate={navigate} />
+            )}
+          </main>
 
-      <Footer onNavigate={navigate} />
-    </div>
+          <Footer onNavigate={navigate} />
+        </div>
+      </FirebaseProvider>
+    </ErrorBoundary>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot, ExternalLink, Loader2, RotateCcw, Send } from 'lucide-react';
 import {
   ASSISTANT_QUICK_TOPICS,
@@ -27,41 +27,60 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [botpressScriptReady, setBotpressScriptReady] = useState(false);
+  const [botpressReady, setBotpressReady] = useState(false);
+  const msgSeqRef = useRef(0);
+  const sessionSeqRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Prepare Botpress Webchat v2 integration when credentials are configured
   useEffect(() => {
-    if (
-      !capabilities?.botpressConfigured ||
-      !capabilities.botpressBotId ||
-      !capabilities.botpressClientId
-    ) {
-      return;
-    }
-
-    const existing = document.getElementById('signalsure-botpress-inject');
-    if (existing) {
-      setBotpressScriptReady(true);
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.id = 'signalsure-botpress-inject';
-    script.src = 'https://cdn.botpress.cloud/webchat/v2.2/inject.js';
-    script.async = true;
-    script.onload = () => {
-      setBotpressScriptReady(true);
+    return () => {
+      abortControllerRef.current?.abort();
     };
-    document.body.appendChild(script);
-  }, [capabilities]);
+  }, []);
+
+  // Detect embedded Botpress Webchat v5.0 initialization from index.html
+  useEffect(() => {
+    const checkBotpress = () => {
+      const bp = (window as unknown as { botpress?: { open?: () => void } }).botpress;
+      if (bp) {
+        setBotpressReady(true);
+        return true;
+      }
+      return false;
+    };
+
+    if (checkBotpress()) return;
+
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      if (checkBotpress() || attempts >= 15) {
+        window.clearInterval(timer);
+      }
+    }, 400);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleOpenBotpress = () => {
+    const bp = (window as unknown as { botpress?: { open?: () => void } }).botpress;
+    if (bp && typeof bp.open === 'function') {
+      bp.open();
+    } else {
+      setErrorMsg(
+        'Botpress Webchat widget is still initializing or blocked by a browser extension. You can use the Safety Assistant chat on the left.'
+      );
+    }
+  };
 
   const sendQuestion = async (questionText: string) => {
     const trimmed = questionText.trim();
     if (!trimmed || sending) return;
 
+    const currentSession = sessionSeqRef.current;
     setErrorMsg(null);
     const userMsg: AssistantMessage = {
-      id: `u-${Date.now()}`,
+      id: `u-${++msgSeqRef.current}`,
       role: 'user',
       content: trimmed,
       timestamp: new Date().toISOString(),
@@ -73,10 +92,15 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
     setSending(true);
 
     if (capabilities?.aiAnalyzerConfigured) {
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       try {
         const res = await fetch('/api/assistant', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             message: trimmed,
             history: nextHistory.slice(-6).map((m) => ({
@@ -85,16 +109,23 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
             })),
           }),
         });
-        const data = await res.json();
+        const data = (await res.json().catch(() => null)) as {
+          answer?: unknown;
+          suggestedActions?: unknown;
+          researchSources?: unknown;
+        } | null;
+
+        if (currentSession !== sessionSeqRef.current) return;
+
         if (res.ok && typeof data?.answer === 'string') {
           setMessages((prev) => [
             ...prev,
             {
-              id: `a-${Date.now()}`,
+              id: `a-${++msgSeqRef.current}`,
               role: 'assistant',
-              content: data.answer,
+              content: data.answer as string,
               suggestedActions: Array.isArray(data.suggestedActions)
-                ? data.suggestedActions
+                ? data.suggestedActions.filter((s): s is string => typeof s === 'string')
                 : undefined,
               researchSources: sanitizeResearchSources(data.researchSources),
               sourceMode: 'live',
@@ -107,7 +138,14 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
         setErrorMsg(
           'Live AI assistant could not respond; showing local demo safety guidance instead.'
         );
-      } catch {
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          if (currentSession !== sessionSeqRef.current) {
+            setSending(false);
+          }
+          return;
+        }
+        if (currentSession !== sessionSeqRef.current) return;
         setErrorMsg(
           'Network error reaching Live AI; showing local demo safety guidance instead.'
         );
@@ -116,11 +154,12 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
 
     // Honest local demo assistant fallback
     await new Promise((r) => setTimeout(r, 120));
+    if (currentSession !== sessionSeqRef.current) return;
     const reply = getDemoAssistantReply(trimmed);
     setMessages((prev) => [
       ...prev,
       {
-        id: `a-${Date.now()}`,
+        id: `a-${++msgSeqRef.current}`,
         role: 'assistant',
         content: reply.answer,
         suggestedActions: reply.suggestedActions,
@@ -141,6 +180,9 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
   };
 
   const handleReset = () => {
+    sessionSeqRef.current += 1;
+    abortControllerRef.current?.abort();
+    setSending(false);
     setMessages([INITIAL_ASSISTANT_MESSAGE]);
     setInput('');
     setErrorMsg(null);
@@ -317,49 +359,26 @@ export function AssistantPage({ capabilities }: AssistantPageProps) {
           >
             <div className="flex items-center justify-between gap-2">
               <h2 className="font-display text-sm font-semibold text-white">
-                Botpress Webchat Slot
+                Botpress Webchat
               </h2>
-              <span className="text-xs font-medium text-amber-300">
-                {capabilities?.botpressConfigured
-                  ? botpressScriptReady
-                    ? 'Connected'
-                    : 'Loading'
-                  : 'Credentials required'}
+              <span className="text-xs font-medium text-[#00F0C8]">
+                {botpressReady ? 'Connected · v5.0' : 'Embedded · v5.0'}
               </span>
             </div>
 
-            {capabilities?.botpressConfigured ? (
-              <div className="mt-3 text-xs leading-relaxed text-[#C5DAD6]">
-                <p>
-                  Botpress Webchat v2 is enabled for Bot ID{' '}
-                  <span className="font-mono text-[#00F0C8]">
-                    {capabilities.botpressBotId}
-                  </span>
-                  .
-                </p>
-                <div
-                  id="botpress-webchat-container"
-                  className="mt-3 rounded-[2px] border border-white/10 bg-[#030808] p-3 text-[#8FA8A4]"
-                >
-                  {botpressScriptReady
-                    ? 'Botpress webchat script loaded.'
-                    : 'Initializing Botpress webchat script...'}
-                </div>
-              </div>
-            ) : (
-              <div className="mt-3 space-y-2.5 text-xs leading-relaxed text-[#8FA8A4]">
-                <p>
-                  No Botpress credentials are configured yet, so the Local Demo
-                  Safety Assistant on the left is active instead of an empty
-                  widget.
-                </p>
-                <div className="rounded-[2px] border border-white/10 bg-[#030808] p-3 font-mono text-[11px] text-[#B6CCC8]">
-                  BOTPRESS_BOT_ID=...
-                  <br />
-                  BOTPRESS_CLIENT_ID=...
-                </div>
-              </div>
-            )}
+            <div className="mt-3 space-y-3 text-xs leading-relaxed text-[#C5DAD6]">
+              <p>
+                Botpress Webchat v5.0 is active across SignalSure via the
+                floating chat launcher in the bottom-right corner.
+              </p>
+              <button
+                type="button"
+                onClick={handleOpenBotpress}
+                className="inline-flex min-h-10 w-full items-center justify-center rounded-[2px] border border-[#00F0C8]/45 bg-[#030808] px-4 py-2 text-xs font-semibold tracking-wider text-[#00F0C8] uppercase transition-colors hover:bg-[#00F0C8] hover:text-[#031411]"
+              >
+                Open Botpress Webchat
+              </button>
+            </div>
           </section>
         </div>
       </div>

@@ -58,57 +58,95 @@ export function ReportView({ report, compact = false }: ReportViewProps) {
   return (
     <article
       aria-label="Analysis report"
-      className="rounded-[2px] border border-white/10 bg-[#070E0E] p-5 sm:p-6"
+      className="rounded-[2px] border border-white/10 bg-[#070E0E] p-5 sm:p-7"
     >
-      {/* Top report header: honest mode + risk + category */}
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 pb-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-[#8FA8A4]">
-            <span className="font-medium text-[#E2EFEA]">
-              {report.mode === 'demo'
-                ? 'Demo Mode · Sample Rule Engine'
-                : 'Live AI · Google Search Research'}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>{report.category}</span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono text-[#7C9390]">
-              {report.inputKind === 'url' ? 'URL check' : 'Message check'}
-            </span>
+      {/* 1. Verdict & Plain-Language Summary */}
+      <header className="border-b border-white/10 pb-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[#8FA8A4]">
+              <span className="font-medium text-[#E2EFEA]">
+                {report.mode === 'demo'
+                  ? 'Demo Mode · Rule Engine'
+                  : 'Live AI · Google Search Research'}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>{report.category}</span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-[#7C9390]">
+                {report.inputKind === 'url' ? 'URL check' : 'Message check'}
+              </span>
+            </div>
+            <div className="mt-2.5 flex items-center gap-2.5">
+              <RiskIcon
+                className={`h-5 w-5 shrink-0 ${risk.badgeText}`}
+                aria-hidden="true"
+              />
+              <h3 className="font-cyber text-lg font-normal tracking-wide text-white uppercase sm:text-xl">
+                {risk.label}
+              </h3>
+            </div>
           </div>
-          <div className="mt-2.5 flex items-center gap-2.5">
-            <RiskIcon className={`h-5 w-5 shrink-0 ${risk.badgeText}`} aria-hidden="true" />
-            <h3 className="font-cyber text-lg font-normal tracking-wide text-white uppercase sm:text-xl">
-              {risk.label}
-            </h3>
-          </div>
+
+          <span
+            className={`rounded-[2px] border px-3 py-1.5 text-xs font-medium ${risk.borderClass}`}
+          >
+            {report.mode === 'demo'
+              ? 'Example / Demo Assessment'
+              : 'AI-Assisted Assessment'}
+          </span>
         </div>
 
-        <div
-          className={`rounded-[2px] border px-3 py-1.5 text-xs font-medium ${risk.borderClass}`}
+        <p className="mt-4 text-sm leading-relaxed text-[#E2EFEA] sm:text-base">
+          {report.summary}
+        </p>
+      </header>
+
+      {/* 2. Clear Immediate Actions & Independent Verification */}
+      {!compact && (
+        <section
+          aria-label="Recommended next steps"
+          className="mt-6 grid gap-6 border-b border-white/10 pb-6 sm:grid-cols-2"
         >
-          {report.mode === 'demo'
-            ? 'Example / Demo Assessment'
-            : 'AI-Assisted Assessment'}
-        </div>
-      </div>
+          <div>
+            <h4 className="font-display text-xs font-semibold tracking-wider text-[#00F0C8] uppercase">
+              Recommended next steps
+            </h4>
+            <ul className="mt-3 space-y-2.5 text-sm text-[#D7E8E5]">
+              {report.recommendedNextSteps.map((step, i) => (
+                <li key={i} className="flex items-start gap-2.5">
+                  <CheckCircle2
+                    className="mt-0.5 h-4 w-4 shrink-0 text-[#00F0C8]"
+                    aria-hidden="true"
+                  />
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
 
-      {/* Plain-language summary */}
-      <p className="mt-5 text-sm leading-relaxed text-[#D8EAE6] sm:text-base">
-        {report.summary}
-      </p>
+          <div>
+            <h4 className="font-display text-xs font-semibold tracking-wider text-[#E2EFEA] uppercase">
+              Independent verification
+            </h4>
+            <p className="mt-3 text-sm leading-relaxed text-[#B6CCC8]">
+              {report.verificationGuidance}
+            </p>
+          </div>
+        </section>
+      )}
 
-      {/* Observed Evidence */}
+      {/* 3. Key Observed Indicators */}
       <section className="mt-6">
-        <h4 className="font-display text-sm font-semibold text-white">
+        <h4 className="font-display text-xs font-semibold tracking-wider text-[#E2EFEA] uppercase">
           Observed evidence in submission
         </h4>
         {report.observedEvidence.length > 0 ? (
-          <ul className="mt-3 divide-y divide-white/10 border-y border-white/10">
+          <ul className="mt-3 space-y-3">
             {report.observedEvidence.map((item, idx) => (
               <li
                 key={`${item.indicatorType}-${idx}`}
-                className="py-4"
+                className="rounded-[2px] border border-white/10 bg-[#040A0A] p-4"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="font-semibold text-[#F1F7F6]">
@@ -130,17 +168,17 @@ export function ReportView({ report, compact = false }: ReportViewProps) {
                       : 'Caution cue'}
                   </span>
                 </div>
-                <blockquote className="mt-2 rounded-[2px] border border-white/10 bg-[#030808] px-3 py-2 font-mono text-xs leading-relaxed text-[#8CEEE0] [overflow-wrap:anywhere]">
+                <blockquote className="mt-2 border-l-2 border-[#00F0C8]/50 pl-3 font-mono text-xs leading-relaxed text-[#8CEEE0] [overflow-wrap:anywhere]">
                   “{item.quotedPhrase}”
                 </blockquote>
-                <p className="mt-2.5 text-sm leading-relaxed text-[#B6CCC8]">
+                <p className="mt-2 text-xs leading-relaxed text-[#B6CCC8] sm:text-sm">
                   {item.whyItMatters}
                 </p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-2 rounded-[2px] border border-white/10 bg-[#040B0B] p-4 text-sm text-[#B6CCC8]">
+          <p className="mt-3 rounded-[2px] border border-white/10 bg-[#040B0B] p-4 text-sm text-[#B6CCC8]">
             No common scam phrases were matched in the submitted text. Remember:
             the absence of obvious warning keywords never proves a message or
             link is genuine.
@@ -148,10 +186,9 @@ export function ReportView({ report, compact = false }: ReportViewProps) {
         )}
       </section>
 
-      {/* Web Research & Official Verification Sources (Live Gemini + Google Search) */}
+      {/* 4. Web Research & Sources (compact & tidy) */}
       {!compact &&
         (report.researchSummary ||
-          (report.researchQueries && report.researchQueries.length > 0) ||
           (report.researchSources && report.researchSources.length > 0)) && (
           <section
             aria-label="Web research and sources"
@@ -160,8 +197,8 @@ export function ReportView({ report, compact = false }: ReportViewProps) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Globe className="h-4 w-4 text-[#00F0C8]" aria-hidden="true" />
-                <h4 className="font-display text-sm font-semibold text-white">
-                  Gemini web research & verification
+                <h4 className="font-display text-xs font-semibold tracking-wider text-white uppercase">
+                  Web research findings
                 </h4>
               </div>
               {report.modelLabel && (
@@ -177,108 +214,74 @@ export function ReportView({ report, compact = false }: ReportViewProps) {
               </p>
             )}
 
-            {report.researchQueries && report.researchQueries.length > 0 && (
-              <div className="mt-3.5">
-                <p className="text-[11px] font-medium tracking-wider text-[#7E9692] uppercase">
-                  Search checks run
-                </p>
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  {report.researchQueries.map((query, idx) => (
-                    <span
-                      key={`${query}-${idx}`}
-                      className="inline-flex items-center gap-1.5 rounded-[2px] border border-white/10 bg-[#030808] px-2.5 py-1 font-mono text-[11px] text-[#9CC5BF]"
-                    >
-                      <Search className="h-3 w-3 text-[#00F0C8]" aria-hidden="true" />
-                      {query}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {report.researchSources && report.researchSources.length > 0 && (
-              <div className="mt-4 border-t border-white/10 pt-3.5">
-                <p className="text-[11px] font-medium tracking-wider text-[#7E9692] uppercase">
-                  Sources consulted
-                </p>
-                <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {report.researchSources.map((src) => {
-                    const safeHref = sanitizeExternalUrl(src.url);
-                    if (!safeHref) return null;
-                    return (
-                      <li key={safeHref}>
-                        <a
-                          href={safeHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-between gap-2 rounded-[2px] border border-white/10 bg-[#030808] px-3 py-2 text-xs text-[#C5DAD6] transition-colors hover:border-[#00F0C8]/50 hover:text-white"
-                        >
-                          <span className="truncate font-medium">{src.title}</span>
-                          <ExternalLink
-                            className="h-3.5 w-3.5 shrink-0 text-[#00F0C8]"
-                            aria-hidden="true"
-                          />
-                        </a>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+              <ul className="mt-3.5 grid gap-2 sm:grid-cols-2">
+                {report.researchSources.map((src) => {
+                  const safeHref = sanitizeExternalUrl(src.url);
+                  if (!safeHref) return null;
+                  return (
+                    <li key={safeHref}>
+                      <a
+                        href={safeHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-2 rounded-[2px] border border-white/10 bg-[#030808] px-3 py-2 text-xs text-[#C5DAD6] transition-colors hover:border-[#00F0C8]/50 hover:text-white"
+                      >
+                        <span className="truncate font-medium">{src.title}</span>
+                        <ExternalLink
+                          className="h-3.5 w-3.5 shrink-0 text-[#00F0C8]"
+                          aria-hidden="true"
+                        />
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </section>
         )}
 
-      {/* Information Gaps: separating evidence from what cannot be verified */}
-      <section className="mt-6">
-        <h4 className="font-display text-sm font-semibold text-white">
-          What cannot be verified from this input alone
-        </h4>
-        <ul className="mt-2.5 space-y-2 text-sm text-[#B6CCC8]">
-          {report.informationGaps.map((gap, i) => (
-            <li key={i} className="flex items-start gap-2.5">
-              <Info
-                className="mt-0.5 h-4 w-4 shrink-0 text-[#7C9390]"
-                aria-hidden="true"
-              />
-              <span>{gap}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {/* 5. Unverified Gaps & Search Checks (collapsed cleanly if compact, or tidy disclosure to avoid visual clutter) */}
+      <details className="mt-5 rounded-[2px] border border-white/10 bg-[#040A0A] p-4">
+        <summary className="cursor-pointer font-display text-xs font-semibold tracking-wider text-[#B6CCC8] uppercase hover:text-white">
+          What cannot be verified from this input alone ({report.informationGaps.length})
+        </summary>
+        <div className="mt-3 space-y-3 border-t border-white/10 pt-3">
+          <ul className="space-y-2 text-xs leading-relaxed text-[#B6CCC8] sm:text-sm">
+            {report.informationGaps.map((gap, i) => (
+              <li key={i} className="flex items-start gap-2.5">
+                <Info
+                  className="mt-0.5 h-4 w-4 shrink-0 text-[#7C9390]"
+                  aria-hidden="true"
+                />
+                <span>{gap}</span>
+              </li>
+            ))}
+          </ul>
 
-      {/* Recommended Next Steps & Independent Verification */}
-      {!compact && (
-        <div className="mt-6 grid gap-5 border-t border-white/10 pt-6 sm:grid-cols-2">
-          <div>
-            <h4 className="font-display text-sm font-semibold text-white">
-              Recommended next steps
-            </h4>
-            <ul className="mt-2.5 space-y-2 text-sm text-[#B6CCC8]">
-              {report.recommendedNextSteps.map((step, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <CheckCircle2
-                    className="mt-0.5 h-4 w-4 shrink-0 text-[#00F0C8]"
-                    aria-hidden="true"
-                  />
-                  <span>{step}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="font-display text-sm font-semibold text-white">
-              Independent verification
-            </h4>
-            <p className="mt-2.5 text-sm leading-relaxed text-[#B6CCC8]">
-              {report.verificationGuidance}
-            </p>
-          </div>
+          {!compact && report.researchQueries && report.researchQueries.length > 0 && (
+            <div className="border-t border-white/10 pt-3">
+              <p className="text-[11px] font-medium tracking-wider text-[#7E9692] uppercase">
+                Web search queries checked
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {report.researchQueries.map((query, idx) => (
+                  <span
+                    key={`${query}-${idx}`}
+                    className="inline-flex items-center gap-1.5 rounded-[2px] border border-white/10 bg-[#030808] px-2.5 py-1 font-mono text-[11px] text-[#9CC5BF]"
+                  >
+                    <Search className="h-3 w-3 text-[#00F0C8]" aria-hidden="true" />
+                    {query}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </details>
 
-      {/* India Emergency Guidance */}
-      <div className="mt-6 rounded-[2px] border border-amber-500/25 bg-amber-950/15 p-4">
+      {/* 6. India Emergency Guidance */}
+      <div className="mt-5 rounded-[2px] border border-amber-500/25 bg-amber-950/15 p-4">
         <div className="flex items-start gap-3">
           <PhoneCall
             className="mt-0.5 h-4 w-4 shrink-0 text-amber-300"

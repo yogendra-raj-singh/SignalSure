@@ -13,6 +13,11 @@ import {
   validateAnalysisReport,
   validateIncidentInput,
 } from './src/lib/validation';
+import { buildAnalysisLogPayload } from './src/lib/googleSheets';
+import {
+  buildThreatAlertEmailPayload,
+  isThreatAlertEligible,
+} from './src/lib/threatAlert';
 import type { IncidentReportInput, InputKind, ServerCapabilities } from './src/lib/types';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -60,6 +65,115 @@ function isSafeWebhookUrl(rawUrl: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function getFirebaseWebApiKey(): string | null {
+  try {
+    const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    const fallbackPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    const resolved = fs.existsSync(configPath) ? configPath : fallbackPath;
+    if (!fs.existsSync(resolved)) return null;
+    const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8')) as {
+      apiKey?: unknown;
+    };
+    return typeof parsed.apiKey === 'string' && parsed.apiKey.trim()
+      ? parsed.apiKey.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+interface VerifiedFirebaseUser {
+  uid: string;
+  email: string;
+  emailVerified: boolean;
+  displayName?: string;
+}
+
+async function verifyFirebaseUserFromBearer(
+  authHeader: string | undefined
+): Promise<VerifiedFirebaseUser | null> {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const idToken = authHeader.slice('Bearer '.length).trim();
+  if (!idToken) return null;
+
+  const apiKey = getFirebaseWebApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const resp = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(
+        apiKey
+      )}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({ idToken }),
+      }
+    );
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      users?: Array<{
+        localId?: string;
+        email?: string;
+        emailVerified?: boolean;
+        displayName?: string;
+      }>;
+    };
+    const user = data.users?.[0];
+    if (!user?.localId || !user?.email || !user?.emailVerified) {
+      return null;
+    }
+    return {
+      uid: user.localId,
+      email: user.email,
+      emailVerified: Boolean(user.emailVerified),
+      displayName: user.displayName,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const threatAlertRateMap = new Map<
+  string,
+  { timestamps: number[]; lastSig?: string; lastSigAt?: number }
+>();
+
+function checkThreatAlertQuota(uid: string, signature: string): {
+  allowed: boolean;
+  reason?: string;
+} {
+  const now = Date.now();
+  const oneHourAgo = now - 60 * 60 * 1000;
+  const entry = threatAlertRateMap.get(uid) || { timestamps: [] };
+  entry.timestamps = entry.timestamps.filter((t) => t > oneHourAgo);
+
+  if (
+    entry.lastSig === signature &&
+    entry.lastSigAt &&
+    now - entry.lastSigAt < 3 * 60 * 1000
+  ) {
+    return {
+      allowed: false,
+      reason: 'An identical threat alert email was already sent recently.',
+    };
+  }
+
+  if (entry.timestamps.length >= 5) {
+    return {
+      allowed: false,
+      reason: 'Hourly threat-alert email limit reached (5 per hour).',
+    };
+  }
+
+  entry.timestamps.push(now);
+  entry.lastSig = signature;
+  entry.lastSigAt = now;
+  threatAlertRateMap.set(uid, entry);
+  return { allowed: true };
 }
 
 function getCapabilities(): ServerCapabilities {
@@ -489,13 +603,18 @@ async function startServer() {
 
       const forwardedTo: string[] = [];
       for (const hook of webhooks) {
-        const resp = await fetch(hook.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (resp.ok) {
-          forwardedTo.push(hook.label);
+        try {
+          const resp = await fetch(hook.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(8000),
+            body: JSON.stringify(payload),
+          });
+          if (resp.ok) {
+            forwardedTo.push(hook.label);
+          }
+        } catch {
+          // Individual webhook failure should not prevent trying remaining connectors
         }
       }
 
@@ -521,6 +640,216 @@ async function startServer() {
         message: 'Unable to submit incident report right now.',
       });
     }
+  });
+
+  app.post('/api/analysis-log', async (req: Request, res: Response) => {
+    try {
+      const sheetsUrl = isSafeWebhookUrl(process.env.GOOGLE_SHEETS_WEBHOOK_URL);
+      if (!sheetsUrl) {
+        res.json({
+          forwarded: false,
+          configured: false,
+          reason: 'GOOGLE_SHEETS_WEBHOOK_URL is not configured.',
+        });
+        return;
+      }
+
+      const body = req.body as {
+        rawInput?: unknown;
+        userEmail?: unknown;
+        report?: unknown;
+      };
+
+      const rawInput = typeof body?.rawInput === 'string' ? body.rawInput.trim() : '';
+      if (!rawInput || rawInput.length > 5000) {
+        res.status(400).json({
+          errorCode: 'INVALID_LOG_INPUT',
+          message: 'A valid analyzed input string is required.',
+        });
+        return;
+      }
+
+      const rawReport =
+        body?.report && typeof body.report === 'object'
+          ? (body.report as Record<string, unknown>)
+          : null;
+      if (!rawReport) {
+        res.status(400).json({
+          errorCode: 'INVALID_LOG_REPORT',
+          message: 'A valid structured analysis report is required.',
+        });
+        return;
+      }
+
+      const mode = rawReport.mode === 'live' ? 'live' : 'demo';
+      const inputKind: InputKind = rawReport.inputKind === 'url' ? 'url' : 'message';
+      const validatedReport = validateAnalysisReport(rawReport, mode, inputKind);
+
+      const candidateEmail =
+        typeof body?.userEmail === 'string' ? body.userEmail.trim().slice(0, 200) : '';
+      const safeEmail =
+        candidateEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail)
+          ? candidateEmail
+          : null;
+
+      const payload = buildAnalysisLogPayload({
+        rawInput,
+        userEmail: safeEmail,
+        report: validatedReport,
+      });
+
+      const resp = await fetch(sheetsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        res.status(502).json({
+          forwarded: false,
+          configured: true,
+          message: 'Configured Google Sheets webhook rejected the analysis log entry.',
+        });
+        return;
+      }
+
+      res.json({
+        forwarded: true,
+        configured: true,
+      });
+    } catch {
+      res.status(502).json({
+        forwarded: false,
+        configured: Boolean(isSafeWebhookUrl(process.env.GOOGLE_SHEETS_WEBHOOK_URL)),
+        message: 'Unable to reach configured Google Sheets webhook.',
+      });
+    }
+  });
+
+  app.post('/api/threat-alert', async (req: Request, res: Response) => {
+    try {
+      const gmailWebhookUrl = isSafeWebhookUrl(process.env.GMAIL_ALERT_WEBHOOK_URL);
+      if (!gmailWebhookUrl) {
+        res.json({
+          sent: false,
+          configured: false,
+          reason: 'GMAIL_ALERT_WEBHOOK_URL is not configured.',
+        });
+        return;
+      }
+
+      const verifiedUser = await verifyFirebaseUserFromBearer(
+        req.headers.authorization
+      );
+      if (!verifiedUser) {
+        res.status(401).json({
+          sent: false,
+          configured: true,
+          errorCode: 'UNAUTHORIZED_THREAT_ALERT',
+          message:
+            'Sign in with a verified Google account to receive threat-alert emails.',
+        });
+        return;
+      }
+
+      const body = req.body as {
+        rawInput?: unknown;
+        report?: unknown;
+      };
+      const rawInput =
+        typeof body?.rawInput === 'string' ? body.rawInput.trim() : '';
+      if (!rawInput || rawInput.length > 5000) {
+        res.status(400).json({
+          sent: false,
+          errorCode: 'INVALID_ALERT_INPUT',
+          message: 'A valid analyzed input string is required.',
+        });
+        return;
+      }
+
+      const rawReport =
+        body?.report && typeof body.report === 'object'
+          ? (body.report as Record<string, unknown>)
+          : null;
+      if (!rawReport) {
+        res.status(400).json({
+          sent: false,
+          errorCode: 'INVALID_ALERT_REPORT',
+          message: 'A valid structured analysis report is required.',
+        });
+        return;
+      }
+
+      const mode = rawReport.mode === 'live' ? 'live' : 'demo';
+      const inputKind: InputKind = rawReport.inputKind === 'url' ? 'url' : 'message';
+      const validatedReport = validateAnalysisReport(rawReport, mode, inputKind);
+
+      if (!isThreatAlertEligible(validatedReport.riskLevel)) {
+        res.json({
+          sent: false,
+          configured: true,
+          skipped: 'Threat alert emails are sent only for High or Critical risks.',
+        });
+        return;
+      }
+
+      const sig = `${validatedReport.riskLevel}:${validatedReport.category}:${validatedReport.summary.slice(
+        0,
+        80
+      )}`;
+      const quota = checkThreatAlertQuota(verifiedUser.uid, sig);
+      if (!quota.allowed) {
+        res.status(429).json({
+          sent: false,
+          configured: true,
+          message: quota.reason,
+        });
+        return;
+      }
+
+      const alertPayload = buildThreatAlertEmailPayload({
+        recipientEmail: verifiedUser.email,
+        recipientName: verifiedUser.displayName,
+        rawInput,
+        report: validatedReport,
+      });
+
+      const resp = await fetch(gmailWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+        body: JSON.stringify(alertPayload),
+      });
+
+      if (!resp.ok) {
+        res.status(502).json({
+          sent: false,
+          configured: true,
+          message: 'Developer Gmail alert webhook rejected the notification.',
+        });
+        return;
+      }
+
+      res.json({
+        sent: true,
+        configured: true,
+        recipientEmail: verifiedUser.email,
+      });
+    } catch {
+      res.status(502).json({
+        sent: false,
+        configured: Boolean(isSafeWebhookUrl(process.env.GMAIL_ALERT_WEBHOOK_URL)),
+        message: 'Unable to dispatch threat alert email right now.',
+      });
+    }
+  });
+
+  app.use('/api', (_req: Request, res: Response) => {
+    res.status(404).json({
+      errorCode: 'API_NOT_FOUND',
+      message: 'API endpoint not found.',
+    });
   });
 
   if (process.env.NODE_ENV !== 'production') {

@@ -225,6 +225,7 @@ export function SignalStreams({ reducedMotion, isMobile }: SignalStreamsProps) {
       <primitive object={guideLines.suspicious} />
       <primitive object={guideLines.blocked} />
       <instancedMesh
+        key={count}
         ref={instancedRef}
         args={[particleGeo, particleMat, count]}
       />

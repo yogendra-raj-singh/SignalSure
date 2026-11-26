@@ -1,0 +1,241 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private Google-authenticated user profile stored per user UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Authenticated Firebase user UID matching document ID."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Google account display name."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 200,
+          "description": "Verified Google account email address."
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Google profile avatar URL or empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when user profile was first created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when user profile was last updated."
+        }
+      },
+      "required": ["uid", "displayName", "email", "photoUrl", "createdAt", "updatedAt"]
+    },
+    "ScanReportRecord": {
+      "title": "ScanReportRecord",
+      "description": "Saved scam analysis history entry owned by an authenticated user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who created this saved scan report."
+        },
+        "inputKind": {
+          "type": "string",
+          "enum": ["message", "url"],
+          "maxLength": 16,
+          "description": "Whether a message or URL was analyzed."
+        },
+        "inputPreview": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 220,
+          "description": "Truncated snippet of the submitted text or URL."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["live", "demo"],
+          "maxLength": 10,
+          "description": "Analysis mode used (live Gemini AI or demo rule engine)."
+        },
+        "riskLevel": {
+          "type": "string",
+          "enum": ["Low", "Medium", "High", "Critical"],
+          "maxLength": 16,
+          "description": "Computed risk severity tier."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Classified Indian scam category."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 700,
+          "description": "Plain-language assessment summary."
+        },
+        "researchSummary": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional Gemini web research summary or empty string."
+        },
+        "evidenceCount": {
+          "type": "integer",
+          "description": "Count of observed evidence cues in the report (0 to 20)."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "User-supplied personal follow-up notes."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "resolved"],
+          "maxLength": 16,
+          "description": "Tracking status of the saved scan item."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "ownerId",
+        "inputKind",
+        "inputPreview",
+        "mode",
+        "riskLevel",
+        "category",
+        "summary",
+        "researchSummary",
+        "evidenceCount",
+        "notes",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "IncidentReportRecord": {
+      "title": "IncidentReportRecord",
+      "description": "User-submitted scam incident log persisted for tracking across sessions.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who submitted this incident report."
+        },
+        "referenceId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 32,
+          "pattern": "^SS-[A-Z0-9]+$",
+          "description": "SignalSure incident reference code."
+        },
+        "scamType": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Category of the suspected scam incident."
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Communication channel (SMS, WhatsApp, Call, Email, Website)."
+        },
+        "approximateDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32,
+          "description": "Approximate date string (YYYY-MM-DD)."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2500,
+          "description": "Sanitized incident description excluding OTPs, PINs, or CVVs."
+        },
+        "contactEmail": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional follow-up email address or empty string."
+        },
+        "submissionMode": {
+          "type": "string",
+          "enum": ["live", "demo"],
+          "maxLength": 10,
+          "description": "Whether server webhooks forwarded the report."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["submitted", "archived"],
+          "maxLength": 16,
+          "description": "Incident record lifecycle status."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "ownerId",
+        "referenceId",
+        "scamType",
+        "channel",
+        "approximateDate",
+        "description",
+        "contactEmail",
+        "submissionMode",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private Google-signed-in user profiles (PII isolated strictly to owner)."
+    },
+    "/scanReports/{reportId}": {
+      "schema": { "$ref": "#/entities/ScanReportRecord" },
+      "description": "Private saved scam analysis summaries owned by the authenticated user."
+    },
+    "/incidentReports/{incidentId}": {
+      "schema": { "$ref": "#/entities/IncidentReportRecord" },
+      "description": "Private user-submitted scam incident reports tracked across sessions."
+    }
+  }
+}

@@ -37,6 +37,7 @@ test('validateAnalysisInput validates URL inputs accurately', () => {
 
 test('detectSensitiveDataWarning flags card numbers and explicit secret sharing', () => {
   assert.ok(detectSensitiveDataWarning('My card number is 4111 2222 3333 4444'));
+  assert.ok(detectSensitiveDataWarning('Call 9876543210 and verify card 4111-2222-3333-4444'));
   assert.ok(detectSensitiveDataWarning('My OTP is 492811 please check'));
   assert.equal(
     detectSensitiveDataWarning('Bank SMS says click link to update KYC today'),

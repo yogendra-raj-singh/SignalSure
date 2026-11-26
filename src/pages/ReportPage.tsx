@@ -1,12 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertCircle,
+  Archive,
   CheckCircle2,
+  Database,
   ExternalLink,
   Info,
   Loader2,
+  LogIn,
   PhoneCall,
+  Trash2,
 } from 'lucide-react';
+import { useFirebaseAuth } from '../components/FirebaseProvider';
+import type { SavedIncidentItem } from '../lib/firestoreSchemas';
+import {
+  archiveIncidentReportRecord,
+  deleteIncidentReportRecord,
+  saveIncidentReportRecord,
+  subscribeIncidentReports,
+} from '../lib/firestoreStore';
 import type {
   IncidentReportInput,
   IncidentReportReceipt,
@@ -46,6 +58,7 @@ const INITIAL_FORM: IncidentReportInput = {
 };
 
 export function ReportPage({ capabilities }: ReportPageProps) {
+  const { user, authReady, authLoading, signInWithGoogle } = useFirebaseAuth();
   const [form, setForm] = useState<IncidentReportInput>(INITIAL_FORM);
   const [errors, setErrors] = useState<
     Partial<Record<keyof IncidentReportInput, string>>
@@ -53,10 +66,34 @@ export function ReportPage({ capabilities }: ReportPageProps) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<IncidentReportReceipt | null>(null);
+  const [savedIncidents, setSavedIncidents] = useState<SavedIncidentItem[]>([]);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [savedToDb, setSavedToDb] = useState(false);
+  const [busyIncidentId, setBusyIncidentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!authReady || !user || !user.emailVerified) {
+      setSavedIncidents([]);
+      return;
+    }
+    setDbError(null);
+    const unsub = subscribeIncidentReports(
+      user.uid,
+      (items) => {
+        setSavedIncidents(items);
+      },
+      () => {
+        setDbError('Unable to load saved incident reports from Firestore right now.');
+      }
+    );
+    return () => unsub();
+  }, [authReady, user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setServerError(null);
+    setDbError(null);
+    setSavedToDb(false);
 
     const check = validateIncidentInput(form);
     if (!check.valid) {
@@ -73,8 +110,11 @@ export function ReportPage({ capabilities }: ReportPageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const data = await res.json();
-      if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as {
+        errors?: Partial<Record<keyof IncidentReportInput, string>>;
+        message?: unknown;
+      } | null;
+      if (!res.ok || !data) {
         if (data?.errors && typeof data.errors === 'object') {
           setErrors(data.errors);
         }
@@ -83,11 +123,27 @@ export function ReportPage({ capabilities }: ReportPageProps) {
             ? data.message
             : 'Unable to submit incident report.'
         );
-        setSubmitting(false);
         return;
       }
 
-      setReceipt(data as IncidentReportReceipt);
+      const nextReceipt = data as IncidentReportReceipt;
+      setReceipt(nextReceipt);
+
+      if (user && user.emailVerified) {
+        try {
+          await saveIncidentReportRecord({
+            userId: user.uid,
+            referenceId: nextReceipt.referenceId,
+            input: form,
+            submissionMode: nextReceipt.mode,
+          });
+          setSavedToDb(true);
+        } catch {
+          setDbError(
+            'Report receipt generated, but saving to your Firestore history failed.'
+          );
+        }
+      }
     } catch {
       setServerError(
         'Network error submitting the report. If this involves financial loss, contact 1930 or cybercrime.gov.in directly.'
@@ -101,7 +157,33 @@ export function ReportPage({ capabilities }: ReportPageProps) {
     setForm(INITIAL_FORM);
     setErrors({});
     setServerError(null);
+    setDbError(null);
+    setSavedToDb(false);
     setReceipt(null);
+  };
+
+  const handleArchiveIncident = async (incidentId: string) => {
+    setBusyIncidentId(incidentId);
+    setDbError(null);
+    try {
+      await archiveIncidentReportRecord(incidentId);
+    } catch {
+      setDbError('Unable to archive incident report.');
+    } finally {
+      setBusyIncidentId(null);
+    }
+  };
+
+  const handleDeleteIncident = async (incidentId: string) => {
+    setBusyIncidentId(incidentId);
+    setDbError(null);
+    try {
+      await deleteIncidentReportRecord(incidentId);
+    } catch {
+      setDbError('Unable to delete incident report.');
+    } finally {
+      setBusyIncidentId(null);
+    }
   };
 
   const hasLiveWebhooks = Boolean(
@@ -191,6 +273,11 @@ export function ReportPage({ capabilities }: ReportPageProps) {
                   <p className="mt-2 text-sm leading-relaxed text-[#B6CCC8]">
                     {receipt.message}
                   </p>
+                  {savedToDb && (
+                    <p className="mt-2 text-xs font-medium text-[#00F0C8]">
+                      Also saved to your private Firestore incident history below.
+                    </p>
+                  )}
                   <p className="mt-3 font-mono text-xs text-[#7E9692]">
                     Recorded at {new Date(receipt.submittedAt).toLocaleString()}
                   </p>
@@ -485,6 +572,122 @@ export function ReportPage({ capabilities }: ReportPageProps) {
           </div>
         </aside>
       </div>
+
+      {/* Saved Incident Reports (Firestore + Google Auth) */}
+      <section
+        aria-label="Saved incident reports"
+        className="mt-10 rounded-[2px] border border-white/10 bg-[#070E0E] p-6"
+      >
+        <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2.5">
+            <Database className="h-4 w-4 text-[#00F0C8]" aria-hidden="true" />
+            <div>
+              <h2 className="font-cyber text-base font-normal tracking-wide text-white uppercase">
+                My Saved Incident Reports
+              </h2>
+              <p className="mt-0.5 text-xs text-[#8FA8A4]">
+                {user
+                  ? `Signed in as ${user.email} · Synced privately with Firestore`
+                  : 'Sign in with Google to save submitted incident logs across devices.'}
+              </p>
+            </div>
+          </div>
+
+          {!user && (
+            <button
+              type="button"
+              onClick={() => void signInWithGoogle()}
+              disabled={authLoading}
+              className="inline-flex min-h-10 items-center gap-2 self-start rounded-[2px] border border-[#00F0C8]/45 bg-[#030808] px-4 py-2 text-xs font-semibold tracking-wider text-[#00F0C8] uppercase transition-colors hover:bg-[#00F0C8] hover:text-[#031411]"
+            >
+              <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+              {authLoading ? 'Signing in...' : 'Sign in with Google'}
+            </button>
+          )}
+        </div>
+
+        {dbError && (
+          <p role="alert" className="mt-3 text-xs text-rose-300">
+            {dbError}
+          </p>
+        )}
+
+        {user && savedIncidents.length === 0 && (
+          <p className="mt-4 text-sm text-[#8FA8A4]">
+            No saved incident reports yet. Submissions made while signed in
+            appear here automatically.
+          </p>
+        )}
+
+        {user && savedIncidents.length > 0 && (
+          <ul className="mt-4 space-y-3">
+            {savedIncidents.map((inc) => {
+              const isArchived = inc.status === 'archived';
+              const isBusy = busyIncidentId === inc.id;
+              return (
+                <li
+                  key={inc.id}
+                  className="rounded-[2px] border border-white/10 bg-[#030808] p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-mono font-semibold text-[#00F0C8]">
+                          {inc.referenceId}
+                        </span>
+                        <span className="text-[#5C736F]">·</span>
+                        <span className="font-medium text-white">{inc.scamType}</span>
+                        <span className="text-[#5C736F]">·</span>
+                        <span className="text-[#8FA8A4]">{inc.channel}</span>
+                        <span className="text-[#5C736F]">·</span>
+                        <span className="font-mono text-[#7E9692]">
+                          {inc.approximateDate}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed text-[#C5DAD6]">
+                        {inc.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-[2px] border px-2 py-0.5 text-[11px] font-medium ${
+                          isArchived
+                            ? 'border-white/15 text-[#7E9692]'
+                            : 'border-[#00F0C8]/35 text-[#00F0C8]'
+                        }`}
+                      >
+                        {isArchived ? 'Archived' : 'Submitted'}
+                      </span>
+                      {!isArchived && (
+                        <button
+                          type="button"
+                          onClick={() => void handleArchiveIncident(inc.id)}
+                          disabled={isBusy}
+                          aria-label={`Archive incident ${inc.referenceId}`}
+                          className="inline-flex h-8 items-center gap-1 rounded-[2px] border border-white/15 px-2.5 text-[11px] text-[#B6CCC8] hover:border-[#00F0C8]/50 hover:text-white disabled:opacity-50"
+                        >
+                          <Archive className="h-3 w-3" aria-hidden="true" />
+                          Archive
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteIncident(inc.id)}
+                        disabled={isBusy}
+                        aria-label={`Delete incident ${inc.referenceId}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-[2px] border border-white/10 text-[#8FA8A4] hover:border-rose-400/50 hover:text-rose-300 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

@@ -226,17 +226,27 @@ export function SecurityCoreModel({
     }
   }, [geometries.uniqueVerts]);
 
-  // Clean disposal of geometries, materials, and procedural textures
+  // Clean disposal of geometries, materials, and procedural textures independently
   useEffect(() => {
     return () => {
       Object.values(geometries).forEach((item) => {
         if (item instanceof THREE.BufferGeometry) item.dispose();
       });
+    };
+  }, [geometries]);
+
+  useEffect(() => {
+    return () => {
       Object.values(materials).forEach((mat) => mat.dispose());
+    };
+  }, [materials]);
+
+  useEffect(() => {
+    return () => {
       bumpTexture.dispose();
       radialBaseTexture.dispose();
     };
-  }, [geometries, materials, bumpTexture, radialBaseTexture]);
+  }, [bumpTexture, radialBaseTexture]);
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.1);
